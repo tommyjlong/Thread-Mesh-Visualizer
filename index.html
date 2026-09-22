@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thread Mesh Visualizer</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+    <h1>Thread Mesh Visualizer v2.0</h1>
+    <!-- ver2.0 changing import CLI to import JSON (Future); adding number of nodes -->
+    <div id="controls">
+        <input type="text" id="numNodes" placeholder="Number of Thread nodes (e.g. 20)" value="">
+        <input type="text" id="apiUrl" placeholder="OTBR URL (e.g. http://homeassistant.local:8081)" value="">
+        <select id="linkFilter" style="margin-left: 10px; padding: 8px;">
+            <option value="0">Show All Links</option>
+            <option value="2">Medium & Strong Only (LQI 2+)</option>
+            <option value="3">Strong Only (LQI 3)</option>
+        </select>
+        <button id="btnStart">Start Crawl</button>
+        <button id="btnExport" style="background-color: #17a2b8; color: white;">Export JSON</button>
+        <button id="btnImport" style="background-color: #6610f2; color: white;">Import JSON</button>
+    </div>
+</header>
+
+<div id="main">
+    <div id="network-container">
+        <div id="mynetwork" style="height: 100%; width: 100%;"></div>
+        <div class="legend">
+            <div><span class="dot" style="background:#28a745;"></span>High Quality Link</div>
+            <div><span class="dot" style="background:#ffc107;"></span>Medium Quality Link</div>
+            <div><span class="dot" style="background:#dc3545;"></span>Weak Link</div>
+            <div><span class="dot" style="background:#aaa;"></span>Unknown/Unstable Link</div>
+        </div>
+    </div>
+    <div id="sidebar">
+        <strong>Activity Log</strong>
+        <div id="log-window"></div>
+        <strong>Node Details</strong>
+        <div id="details-panel">Click a node to see details...</div>
+    </div>
+</div>
+
+<!-- ver2.0 changing import CLI to import JSON (Future) -->
+<div id="importModal">
+    <div id="importContent">
+        <h3>FUTURE!! Import Previously Saved Exported (JSON) File</h3> <p>FUTURE <code>select File to import</code>below:</p>
+        <textarea id="jsonInput" placeholder="default file ./export.json &#10;default file ./export.json"></textarea>
+        <div class="modal-footer">
+            <button id="btnCancelImport" style="background-color: #6c757d; color: white;">Cancel</button>
+            <button id="btnParseImport" style="background-color: #28a745; color: white;">Visualize!</button>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+
+</body>
+</html>
