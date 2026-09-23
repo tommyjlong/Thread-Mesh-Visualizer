@@ -6,7 +6,7 @@ This Thread Mesh Visualizer is targeted towards Home Assistant and its OTBR App/
 
 <caption><b>Thread Mesh Visualizer</b></caption>
 
-![Thread Network Visualizer](./images/TMV.png 'Thread Network Visualizer')
+<img src="./images/TMV_Full.jpg" width=750 height=750 />
 
 ## Features
 
