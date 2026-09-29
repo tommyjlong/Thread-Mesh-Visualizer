@@ -76,6 +76,7 @@ Finding out the device's Extended MAC address can be a bit difficult: For Home A
 
 ## History
 * Version 2.0 - The first release after highly modifying the original code from fpb.
+* Version 2.1 - Adds Getting using endpoint `/api/devices` (See Release Notes)
   
 ## Credits
 Fernando Birra (fpb) at [https://github.com/fpb/Thread-Network-Visualizer](https://github.com/fpb/Thread-Network-Visualizer) is the original developer of this.  This original code has since been highly modified.
