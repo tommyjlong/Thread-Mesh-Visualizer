@@ -1,10 +1,22 @@
+
+// History
+// - Original Fork: unnamed version
+// - v2.0
+// - v2.1: 
+//   + Using GET /api/devices instead of GET /node
+//   + Getting IPv6 OMR address from /api/devices and presenting it in Node Details Highlights
+//     (list of all IPv6 addresses remains in the raw data
+//   + Adding each node's portion of /api/devices to raw Data
+//   + Adding Device names to Nodes Detail Highlights
+
+
 // --- CONFIGURATION ---
 // If empty, it attempts to use the current page's origin (good for "Host It There" method)
 let API_BASE = ""; 
 
 //[v2.0] define types of data returned by the OTBR or for internal use.
 const NETWORK_DIAG = "getNetworkDiag";
-const GET_NODE = "getNode";  //uses GET on legacy endpoint `/node`.
+const GET_NODE = "getNode";  //GET root OTBR data using newer `/api/devices` (OLD use GET on legacy endpoint `/node`).
 const NEIGHBOR = "netDiagNeighborData"; //getNetworkDiag's per Neighbor data. For internal use.
 
 
@@ -60,6 +72,9 @@ const nodeQueue = [];
 let isScanning = false;
 let currentLeaderId = null;
 
+//[v2.1] add storage for results from GET /api/devices
+let apiDevices = null;
+
 // Manual Name Mapping: { "ext_address_hex": "Friendly Name" }
 let deviceNames = {
     "b2c9a2836317bc63": "Border Router",
@@ -68,10 +83,11 @@ let deviceNames = {
 };
 
 // Try to load external names file if valid
+// [v2.1] tweak the log as this error is thrown if the file exists but malformed (ex. missing quote).
 fetch('device_names.json')
     .then(r => r.json())
     .then(data => { deviceNames = { ...deviceNames, ...data }; })
-    .catch(e => console.log("No external device_names.json found, using defaults."));
+    .catch(e => console.log("No external device_names.json found, or it has malformed content. Using defaults."));
 
 // --- CLICK INTERACTION ---
 network.on("click", function (params) {
@@ -86,8 +102,10 @@ network.on("click", function (params) {
 //          ip6Html = '<strong>IPv6 Addresses:</strong><br><div style="font-size:10px; margin-left:10px;">' + 
 //                    node.rawData.ip6.join('<br>') + '</div><br>';
 //      }
+        //[v2.1] Change list of IPv6 Addresses presented to the user to just the OMR. Make the font-size bigger
         if (node.ip6 && Array.isArray(node.ip6)) {
-            ip6Html = '<strong>IPv6 Addresses:</strong><br><div style="font-size:10px; margin-left:10px;">' + 
+          //ip6Html = '<strong>IPv6 Addresses:</strong><br><div style="font-size:10px; margin-left:10px;">' + 
+            ip6Html = '<strong>IPv6 Address (OMR):</strong><br><div style="font-size:14px; margin-left:10px;">' + 
                       node.ip6.join('<br>') + '</div><br>';
         }
       //[v2.0] original code inserted the extended Address into the 
@@ -98,8 +116,9 @@ network.on("click", function (params) {
 
         //[v2.0] Various tweaks to the displayed "Node Details'.
         const detailHtml = `
-            <strong>RLOC16:</strong> ${node.id}<br>
+            <strong>Device Name:</strong> ${node.device_name}<br>
             <strong>Extended Address:</strong> ${extAddr}<br>
+            <strong>RLOC16:</strong> ${node.id}<br>
             <strong>Thread Version:</strong> ${node.threadVer}<br>
             ${ip6Html}
             <strong>Role:</strong> ${node.nodeRole}<br>
@@ -245,9 +264,11 @@ async function startDiscovery() {
         log(`Error updating: ${e.message}`);
     }
 
-    // Step 1: Get Starting (aka Root) Node Data using GET "/node".
+    // Step 1 (OLD): Get Starting (aka Root) Node Data using GET "/node".
+    // [v2.1] Now using more modern GET "/api/devices" instead of "/node".
+    //    So for now we'll still do a GET /node but doesn't do anything with the data.
+    //    TBD eventually remove this part.
     try {
-        //[vX.Y] FUTURE, USE more modern "/api/devices" instead of "/node".
 
         const selfResp = await fetch(`${API_BASE}/node`, {
             headers: { 'Accept': 'application/json' }
@@ -277,17 +298,68 @@ async function startDiscovery() {
                 throw new Error("Could not find RLOC16 in API response. Check console.");
         }
         
-        log(`Border Router found at ${startRloc} (${startExt || 'Unknown Ext'})`);
+      //log(`Border Router found at ${startRloc} (${startExt || 'Unknown Ext'})`);
         
         // Add Root BR to map
         //[v2.0] add "type" of query data to being passed in.
       //addNodeToGraph(startRloc, { ...rootData, extAddress: startExt }, "Border Router");
-        addNodeToGraph(startRloc, { ...rootData, extAddress: startExt }, GET_NODE, "Border Router");
+      //[v2.1] Don't need to add/overwrite extAddress to the rootData as its already there
+      //addNodeToGraph(startRloc, { ...rootData, extAddress: startExt }, GET_NODE, "Border Router");
+//      addNodeToGraph(startRloc, rootData, GET_NODE, "Border Router");
         
         // Start Crawl with Object containing both RLOC and ExtAddress
         // ExtAddress is preferred for API destination
-        nodeQueue.push({ rloc: startRloc, ext: startExt });
-        processQueue();
+//      nodeQueue.push({ rloc: startRloc, ext: startExt });
+//      processQueue();
+
+    } catch (e) {
+        console.error(e); // Log full error to browser console
+        log(`Error: ${e.message}`);
+        isScanning = false;
+        document.getElementById('btnStart').disabled = false;
+    }
+
+    // [v2.1], USE more modern "/api/devices" instead of "/node".
+    // Step 1 (NEW): Get Device Data using GET "/api/devices".
+    //   The data return is a list of data for every node, 
+    //   but only the data for the root OTBR will have an additional 
+    //   attribute of "baId" and will have even more additional attributes 
+    //   that are those that were in original GET /node.
+    //   So what we're doing here is essentially replicating what was done
+    //   originally using GET node.  
+    //   In addition, we'll store the /api/devices data for per node processing later on.
+    try {
+      //log(`GETing api/devices`); //debug
+        const selfResp = await fetch(`${API_BASE}/api/devices`, {
+            headers: { 'Accept': 'application/vnd.api+json' }
+        });
+        if (!selfResp.ok) throw new Error(`HTTP Error: ${selfResp.status}`);
+        
+        const selfData = await selfResp.json();
+        // If 'result' exists, use it. Otherwise, use the root object.
+        apiDevices = selfData.result ? selfData.result : selfData; 
+      //log(`First device ${apiDevices.data[0].attributes.mlEidIid}`); //debug
+
+        const rootIndex = apiDevices.data.findIndex(item => item.attributes.baId);
+        if (rootIndex !== -1) {
+          //log(`baId found for Index: ${rootIndex}`); //debug
+            log(`ext Address for rootIndex: ${apiDevices.data[rootIndex].attributes.extAddress}`);
+            const startRloc = apiDevices.data[rootIndex].attributes.rloc16;
+            if (!startRloc) {
+                throw new Error("Could not find RLOC16 in API response. Check console.");
+            }
+            const startExt = apiDevices.data[rootIndex].attributes.extAddress; 
+            log(`Border Router found at ${startRloc} (${startExt || 'Unknown Ext'})`);
+            addNodeToGraph(startRloc, apiDevices.data[rootIndex].attributes, GET_NODE, "Border Router");
+        
+            // Start Crawl with Object containing both RLOC and ExtAddress
+            // ExtAddress is preferred for API destination
+            nodeQueue.push({ rloc: startRloc, ext: startExt });
+            processQueue();
+
+        }else {
+            log(`Could not find Border Router in List of Devices`);
+        }
 
     } catch (e) {
         console.error(e); // Log full error to browser console
@@ -504,12 +576,14 @@ function addNodeToGraph(rloc, data, data_type, role, startPos = null) {
   //log(`addNodeToGraph ${data_type}`); //[v2.0] debug.
 
   //[v2.0] note: extended address is available in all the queried data_type(s) being
-  //  handled here, so no real need to check data_type.
+  //  handled here, so no real need to do a check for data_type here.
     const ext = rawData.extAddress;
     
     let label = rloc;
+    let device_name = "-"; //[v2.1] adding Device Name to Node Details.
     if (ext && deviceNames[ext]) {
             label = `${deviceNames[ext]}\n(${rloc})`;
+            device_name = `${deviceNames[ext]}\n`;
     }
 
 
@@ -534,8 +608,10 @@ function addNodeToGraph(rloc, data, data_type, role, startPos = null) {
             } else {
               //log(`Not Network Leader`); //[v2.0] debug
             }
-            // add to node dB's "rawData" the raw return data value starting with keyname of "getNodeData"
-            nodeOptRawData = {getNodeData:rawData};
+            // [v2.0] add to node dB's "rawData" the raw return data value starting with keyname of "getNodeData"
+            // [v2.1] change "getNodeData" to getDeviceData" since now using GET api/devices.
+          //nodeOptRawData = {getNodeData:rawData};
+            nodeOptRawData = {getDeviceData:rawData};
         } else if (data_type === NEIGHBOR) {
             //[v2.0] Here we are created a placeholder node representing the neighbor.
             //       so won't add any queried return data at this point (will be directly queried later).
@@ -567,10 +643,12 @@ function addNodeToGraph(rloc, data, data_type, role, startPos = null) {
       //if (rawData.ip6) title += `\nIPv6: ${rawData.ip6.join('\n      ')}`;
 
         //[v2.0] add ip6, extAddress, nodeRole, Thread version as standalone parameters in the node dB
+        //[v2.1] add Device Name to Node Details, but store in node dB.
         const nodeOpts = {
             id: rloc,
             label: label,
             title: title,
+            device_name: device_name,
             group: role,
             color: color,
             rawData: nodeOptRawData,
@@ -632,18 +710,40 @@ function addNodeToGraph(rloc, data, data_type, role, startPos = null) {
                newLabel = `${deviceNames[newExt]}\n(${rloc})`;
             }
             //[v2.0] move IPv6 processing to here.
-            if (rawData.ipv6Addresses) {
-                ip6Data = rawData.ipv6Addresses;
-                updates.ip6 = ip6Data;
-                updates.title = (updates.title) + `\nIPv6: ${updates.ip6.join('\n      ')}`;
-              //updates.title = (updates.title || node.title) + `\nIPv6: ${updates.ip6.join('\n      ')}`;
-              //updates.title = (updates.title || node.title) + `\nIPv6: ${JSON.stringify(ip6Data, null, 2)}`;
-              //log(`title: ${updates.title}`);
-                needsUpdate = true;
+            //[v2.1] OMR IPv6 addresses are available in /api/device data, So use it instead.
+            const omrIndex = apiDevices.data.findIndex(item => item.attributes.extAddress === newExt);
+            let omrIpv6Address = null;
+            let deviceData = null;
+            if (omrIndex !== -1) {
+                deviceData = apiDevices.data[omrIndex].attributes;
+                omrIpv6Address = deviceData.omrIpv6Address;
+              //omrIpv6Address = apiDevices.data[omrIndex].attributes.omrIpv6Address;
+              //log(`Router OMR IPv6: ${omrIpv6Address}`);
+            } else {
+                log(`Router OMR IPv6: Not found`);
             }
+            
+            if ( omrIpv6Address ) {
+                ip6Data = [`${omrIpv6Address}` ];
+                updates.ip6 = ip6Data;
+              //updates.title = (updates.title) + `\nIPv6: ${omrIpv6Address}\n}`;
+                updates.title = (updates.title) + `\nIPv6 (OMR): ${updates.ip6.join('\n      ')}`;
+                needsUpdate = true;
+            } 
+
+//          if (rawData.ipv6Addresses) {
+//              ip6Data = rawData.ipv6Addresses;
+//              updates.ip6 = ip6Data;
+//              updates.title = (updates.title) + `\nIPv6: ${updates.ip6.join('\n      ')}`;
+//            //updates.title = (updates.title || node.title) + `\nIPv6: ${updates.ip6.join('\n      ')}`;
+//            //updates.title = (updates.title || node.title) + `\nIPv6: ${JSON.stringify(ip6Data, null, 2)}`;
+//            //log(`title: ${updates.title}`);
+//              needsUpdate = true;
+//          }
           //log(`getDiag IPv6: ${JSON.stringify(ip6Data, null, 2)}`);//[v2.0] debug
  
             //[v2.0] refine definition of Border Router and Add Primary
+            //[v2.1] Add this node's part of the GET /api/devices to rawData
             let routerRole = `Router`;
             let isTBR = rawData.isBorderRouter;
             let isPBBR = rawData.isPrimaryBBR;
@@ -665,7 +765,7 @@ function addNodeToGraph(rloc, data, data_type, role, startPos = null) {
             //[v2.0] restructure node.rawData to only contain raw data returned from queries
           //updates.rawData = { ...currentRawData, extAddress: newExt };
           //updates.rawData = rawData;
-            updates.rawData = { ...currentRawData, diagData:rawData};
+            updates.rawData = { ...currentRawData, getNetDiagData:rawData, getDeviceData: deviceData };
       
           //[v2.0] add Thread Version to node dB. Note version is 1.(x-1). Ex. x=5 is Thread 1.4
             let threadVersion = 'Unknown';
@@ -993,8 +1093,11 @@ function updateGraph(data, data_type) {
              // const label = `Child ${child.childId}\n${isSleepy ? '(Sleepy)' : ''}`;
                 const isSleepy = child && !child.rxOnWhenIdle;
                 label = `Child ${child.rloc16}\n${isSleepy ? '(Sleepy)' : ''}`;
+                //[v2.1] add Device name to Node Details via node dB
+                device_name = "-";
                 if (child.extAddress && deviceNames[child.extAddress]) {
                      label = `${deviceNames[child.extAddress]}\n(${child.rloc16})`;
+                     device_name = `${deviceNames[child.extAddress]}\n`;
                  } 
                 //[v2.0] refine child role
                 //Thread spec Section 4.4.2 
@@ -1007,14 +1110,30 @@ function updateGraph(data, data_type) {
                 if (isSleepy !== null) childRole += isSleepy ? 'Sleepy (SED or SSED)' : 'non-Sleepy';
                 if (child.deviceTypeFTD !== null) childRole += child.deviceTypeFTD ? ', ${reedOrFed}' : ', MTD';
 
-                //[v2.0] add child ipv6addresses
+                //[v2.0] add processing for networkDiag element "childIpv6Addresses"
                 let childV6 = [];
                 const targetIndex = data.childIpv6Addresses.findIndex(item => item.rloc16 === child.rloc16);
                 if (targetIndex !== -1) {
-                  //log(`rloc: ${child.rloc16}, Index: ${targetIndex}`);
+                  //log(`rloc: ${child.rloc16}, Index: ${targetIndex}`); //debug
                     childV6 = data.childIpv6Addresses[targetIndex].ipv6Addresses;
-                  //log(`child's IPv6 Addresses: ${childV6}`);
+                  //log(`child's IPv6 Addresses: ${childV6}`); //debug
                 }
+
+                //[v2.1] OMR IPv6 addresses are available in /api/device data, so present this to the user.
+                //       Put the OMR IPv6 in the node dB instead of all the childIpv6Addresses.
+                let childOmrV6 = []; //making a list to be compatible w. childV6 even though only one OMR address.
+                const omrIndex = apiDevices.data.findIndex(item => item.attributes.extAddress === child.extAddress);
+                let omrIpv6Address = null;
+                let deviceData = null;
+                if (omrIndex !== -1) {
+                    deviceData = apiDevices.data[omrIndex].attributes;
+                    omrIpv6Address = deviceData.omrIpv6Address;
+                  //omrIpv6Address = apiDevices.data[omrIndex].attributes.omrIpv6Address;
+                  //log(`Child OMR IPv6: ${omrIpv6Address}`); //debug
+                } else {
+                    log(`Child OMR IPv6: Not found`);
+                }
+                childOmrV6 = omrIpv6Address ? [ `${omrIpv6Address}` ] : [ "-" ];
 
                 //[v2.0] add Thread Version to node dB. Note version is 1.x-1
                   let threadVersion = 'Unknown';
@@ -1060,15 +1179,19 @@ function updateGraph(data, data_type) {
                     //log(`lm=${lm}, lqi=${lqi}`); //[ver2.0] debug
                   }
 
-                //[v2.0] add IPv6 Addresses to title and add as node dB parameter. 
-                //[v2.0] copy from router the "children" and "childTable" to child node's rawData.
                 //  Change Child ID to Ext Address for consistency
+                //  [v2.0] add IPv6 Addresses to title and add as node dB parameter. 
+                //  [v2.0] copy from router the "children" and "childTable" to child node's rawData.
+                //  [v2.1] add device name to node dB,  present IPv6 OMR to user instead of all IPv6 addresses.
+                //  [v2.1] copy data from /api/device the "attribute" items for this device to rawData
                 const nodeOpts = {
                     id: childId,
                     label: label,
                   //title: `Child ID: ${child.childId}\nTimeout: ${child.timeout}\nSleepy: ${isSleepy}`,
                   //title: `Child ID: ${child.childId}\nTimeout: ${child.timeout}\nSleepy: ${isSleepy}\nIPv6: ${childV6.join('\n      ')}`,
-                    title: `Ext ID: ${child.extAddress || '??'}\nTimeout: ${child.timeout}\nSleepy: ${isSleepy}\nIPv6: ${childV6.join('\n      ')}`,
+                  //title: `Ext ID: ${child.extAddress || '??'}\nTimeout: ${child.timeout}\nSleepy: ${isSleepy}\nIPv6: ${childV6.join('\n      ')}`,
+                    title: `Ext ID: ${child.extAddress || '??'}\nTimeout: ${child.timeout}\nSleepy: ${isSleepy}\nIPv6: ${childOmrV6.join('\n      ')}`,
+                    device_name: device_name,
                     group: 'EndDevice',
                     shape: isSleepy ? 'dot' : 'diamond', 
                     size: VIS_END_DEVICE_NODE_SIZE,
@@ -1076,8 +1199,14 @@ function updateGraph(data, data_type) {
                   //rawData: child
                   //rawData: {children: child, ip6: data.childIpv6Addresses[targetIndex] },
                   //rawData: {children: child },
-                    rawData: {children: child, childTable: childTable },
-                    ip6: childV6,
+                  //rawData: {children: child, childTable: childTable },
+                  //rawData: {children: child, childTable: childTable, childIpv6Addresses: childV6, getDeviceData: deviceData },
+                    rawData: {
+                              parentGetNetDiag: {children: child, childTable: childTable, childIpv6Addresses: childV6}, 
+                              getDeviceData: deviceData 
+                             },
+                  //ip6: childV6,
+                    ip6: childOmrV6,
                     extAddress: child.extAddress,
                     nodeRole: childRole,
                     threadVer: threadVersion

@@ -38,8 +38,8 @@ You can run this as a static web page. No build process is required (Vanilla JS 
 ## How to Use
 
 ### Discovery
-1.  Enter the number of Thread nodes that are in your Thread network.  This doesn't have to be exact, but should be close.  This helps the Collection Task know how many devices is should be querying for without timing out. _Sometimes this number is not needed at all, particularly after the Collector has run a few times._
-2.  Enter your OTBR URL, for example: `http://192.168.1.50:8081`, or for example with HAOS and its OTBR: `http://homeassistant.local:8081`, and click **Start Crawl**.
+1.  Enter the number of Thread nodes that are in your Thread network.  This doesn't have to be exact, but should be close.  This helps the Collection Task to know how many devices it should be querying for without timing out. _Sometimes this number is not needed at all, particularly after the Collector has run a few times._
+2.  Enter your OTBR URL, for example: `http://192.168.1.50:8081`, or for example with HAOS and its OTBR: `http://homeassistant.local:8081`.
 3.  Click **"Start Crawl"**.
 4.  The tool will:
     *   Have the OTBR Run a Collection Task which has the OTBR collect diagnostic data from the router nodes. _This can be quick or can take a few minutes._
